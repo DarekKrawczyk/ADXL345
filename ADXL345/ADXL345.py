@@ -24,6 +24,9 @@ class ADXL345(object):
         self.currentSleepMode: int = 0b00       # 8Hz
         self.dataScaleFactor: float = 0.0039
         self.resultRounding: int = 4
+        self.xManualOffset: float = 0.0
+        self.yManualOffset: float = 0.0
+        self.zManualOffset: float = 0.0
 
     @property
     def AccX(self) -> float:
@@ -80,7 +83,10 @@ class ADXL345(object):
         self.WriteToRegister(self.OFSX + 1, y)
         self.WriteToRegister(self.OFSX + 2, z)
 
-    def GetAcceleration(self) -> list:
+    def GetRawAccelerationData(self) -> list:
+        return list(self.ReadFromRegisters(self.DATAX0, 6))
+
+    def GetAcceleration(self, IncludeOffset: bool = False) -> list:
         raw: bytes = self.ReadFromRegisters(self.DATAX0, 6)
 
         x: int = raw[1] << 8 | raw[0]
@@ -92,7 +98,11 @@ class ADXL345(object):
         zz: float = round(self.ParseFromComplementTwo(z) * self.dataScaleFactor, self.resultRounding)
         
         result: list = [xx, yy, zz]
-        self.lastAcceleration = result
+        self.lastAcceleration = result 
+        if IncludeOffset == True:
+            result[0] -= self.xManualOffset
+            result[1] -= self.yManualOffset
+            result[2] -= self.zManualOffset
         return result
 
     def SetDataFormat(self, self_test: bool, spi: bool, int_invert: bool, full_res: bool, justify: bool, range: int) -> None:
@@ -132,6 +142,43 @@ class ADXL345(object):
         self.currentSleepMode = sleepMode
         dataFrame: int = (int(Link) << 5) | (int(AutoSleep) << 4) | (int(Measure) << 3) | (int(Sleep) << 2) | sleepMode
         self.WriteToRegister(self.POWER_CTL, dataFrame)
+
+    def PerformManualCalibrationConfig(self, CalibrationPrecision: int = 10) -> None:
+        xss: int = 0
+        yss: int = 0
+        zss: int = 0
+        
+        for i in range(0, CalibrationPrecision):
+            rawData: list = self.GetAcceleration()
+            xss += rawData[0]
+            yss += rawData[1]
+            zss += rawData[2]
+            
+        self.xManualOffset = xss / CalibrationPrecision
+        self.yManualOffset = yss / CalibrationPrecision
+        self.zManualOffset = zss / CalibrationPrecision
+        print(self.xManualOffset)
+        print(self.yManualOffset)
+        print(self.zManualOffset)
+        
+    def PerformCalibrationConfig(self, CalibrationPrecision: int = 10) -> None:
+        xss: int = 0
+        yss: int = 0
+        zss: int = 0
+        
+        for i in range(0, CalibrationPrecision):
+            rawData: list = self.GetRawAccelerationData()
+            xss += rawData[0]
+            yss += rawData[1]
+            zss += rawData[2]
+            
+        xCalib: int = (xss // CalibrationPrecision) & 0b11111111
+        yCalib: int = (yss // CalibrationPrecision) & 0b11111111
+        zCalib: int = (zss // CalibrationPrecision) & 0b11111111
+        self.SetOffsets(x=xCalib, y=yCalib, z=zCalib)
+    
+    def ClearCalibrationConfig(self) -> None:
+        return
 
     def WriteToRegister(self, register: int, value: int) -> None:
         self.i2c.writeto_mem(self.deviceAddress, register, bytearray([value]))
